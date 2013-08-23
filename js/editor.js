@@ -1,88 +1,97 @@
-var editor = (function() {
+var InlineEditorPopup = (function() {
 
 	// Editor elements
-	var headerField, contentField, cleanSlate, lastType, currentNodeList, savedSelection;
+	var editorField, editingElements, selectedElement, cleanSlate, lastType, currentNodeList, savedSelection, updateNotificationFunction, savedElements;
 
 	// Editor Bubble elements
-	var textOptions, optionsBox, boldButton, italicButton, quoteButton, urlButton, urlInput;
+	var textOptions, boldButton, italicButton, quoteButton, urlButton, urlInput;
 
 
 	function init() {
-
-		lastRange = 0;
 		bindElements();
-
-		// Set cursor position
-		var range = document.createRange();
-		var selection = window.getSelection();
-		range.setStart(headerField, 1);
-		selection.removeAllRanges();
-		selection.addRange(range);
-
-		createEventBindings();
 
 		// Load state if storage is supported
 		if ( supportsHtmlStorage() ) {
-			loadState();
+			//loadState();
 		}
 	}
 
-	function createEventBindings( on ) {
+	function startEditing(elements, updateNotificationFunctionParam) {
+		lastRange = 0;
+		// Set cursor position
+		var range = document.createRange();
+		var selection = window.getSelection();
+		range.setStart(elements[0], 1);
+		selection.removeAllRanges();
+		selection.addRange(range);
 
-		// Key up bindings
-		if ( supportsHtmlStorage() ) {
+		createEventBindings(elements);
+		updateNotificationFunction = updateNotificationFunctionParam;
+		savedElements = elements;
+	}
 
-			document.onkeyup = function( event ) {
-				checkTextHighlighting( event );
-				saveState();
-			}
+	function stopEditing() {
+		savedElements.each(function(index, el) {
+			el.onkeyup = null;
+			el.onmousedown = null;
+			el.onmouseup = null;
+		});
+	}
 
-		} else {
-			document.onkeyup = checkTextHighlighting;
-		}
+	function createEventBindings( elements ) {
 
-		// Mouse bindings
-		document.onmousedown = checkTextHighlighting;
-		document.onmouseup = function( event ) {
+		elements.each(function(index, el) {
+			el.onkeyup = onKeyUp;
 
-			setTimeout( function() {
-				checkTextHighlighting( event );
-			}, 1);
-		};
+			// Mouse bindings
+			el.onmousedown = checkTextHighlighting;
+			el.onmouseup = function( event ) {
+
+				setTimeout( function() {
+					checkTextHighlighting( event );
+				}, 1);
+			};
+		});
 	}
 
 	function bindElements() {
 
-		headerField = document.querySelector( '.header' );
-		contentField = document.querySelector( '.content' );
-		textOptions = document.querySelector( '.text-options' );
+		editorField = document.querySelector( '.editor-popup' );
 
-		optionsBox = textOptions.querySelector( '.options' );
-
-		boldButton = textOptions.querySelector( '.bold' );
+		boldButton = editorField.querySelector( '.bold' );
 		boldButton.onclick = onBoldClick;
 
-		italicButton = textOptions.querySelector( '.italic' );
+		italicButton = editorField.querySelector( '.italic' );
 		italicButton.onclick = onItalicClick;
 
-		quoteButton = textOptions.querySelector( '.quote' );
-		quoteButton.onclick = onQuoteClick;
-
-		urlButton = textOptions.querySelector( '.url' );
+		urlButton = editorField.querySelector( '.url' );
 		urlButton.onmousedown = onUrlClick;
 
-		urlInput = textOptions.querySelector( '.url-input' );
+		urlInput = editorField.querySelector( '.url-input' );
 		urlInput.onblur = onUrlInputBlur;
 		urlInput.onkeydown = onUrlInputKeyDown;
+	}
+
+	var throttledPerformNotifyUpdate = _.throttle(function () {
+			if(updateNotificationFunction) {
+				updateNotificationFunction();
+			}
+		}, 100);
+
+	function notifyInlineEditUpdate() {
+		throttledPerformNotifyUpdate();
+	}
+
+	function onKeyUp(event) {
+		notifyInlineEditUpdate();
+		checkTextHighlighting(event);
 	}
 
 	function checkTextHighlighting( event ) {
 
 		var selection = window.getSelection();
 
-		if ( (event.target.className === "url-input" ||
-		     event.target.classList.contains( "url" ) ||
-		     event.target.parentNode.classList.contains( "ui-inputs")) ) {
+		if ($(editorField).hasClass("url-input")) {
 
 			currentNodeList = findNodes( selection.focusNode );
 			updateBubbleStates();
@@ -100,22 +109,23 @@ var editor = (function() {
 
 			currentNodeList = findNodes( selection.focusNode );
 
-			// Find if highlighting is in the editable area
-			if ( hasNode( currentNodeList, "ARTICLE") ) {
+			updateBubbleStates();
+			updateBubblePosition();
 
-				var range = selection.getRangeAt(0);
-				var boundary = range.getBoundingClientRect();
-
-				updateBubbleStates();
-
-				// Show the ui bubble
-				textOptions.className = "text-options active";
-				textOptions.style.top = boundary.top - 5 + document.body.scrollTop + "px";
-				textOptions.style.left = (boundary.left + boundary.right)/2 + "px";
-			}
+			// Show the ui bubble
+			$(editorField).removeClass('fade').addClass('active');
 		}
 
 		lastType = selection.isCollapsed;
+	}
+
+	function updateBubblePosition() {
+		var selection = window.getSelection();
+		var range = selection.getRangeAt(0);
+		var boundary = range.getBoundingClientRect();
+		
+		editorField.style.top = boundary.top - 5 + window.pageYOffset + "px";
+		editorField.style.left = (boundary.left + boundary.right)/2 + "px";
 	}
 
 	function updateBubbleStates() {
@@ -136,12 +146,6 @@ var editor = (function() {
 			italicButton.className = "italic"
 		}
 
-		if ( hasNode( currentNodeList, 'BLOCKQUOTE') ) {
-			quoteButton.className = "quote active"
-		} else {
-			quoteButton.className = "quote"
-		}
-
 		if ( hasNode( currentNodeList, 'A') ) {
 			urlButton.className = "url useicons active"
 		} else {
@@ -151,14 +155,14 @@ var editor = (function() {
 
 	function onSelectorBlur() {
 
-		textOptions.className = "text-options fade";
+		editorField.className = "editor-popup fade";
 		setTimeout( function() {
 
-			if (textOptions.className == "text-options fade") {
+			if (editorField.className == "editor-popup fade") {
 
-				textOptions.className = "text-options";
-				textOptions.style.top = '-999px';
-				textOptions.style.left = '-999px';
+				editorField.className = "editor-popup";
+				editorField.style.top = '-999px';
+				editorField.style.left = '-999px';
 			}
 		}, 260 )
 	}
@@ -202,30 +206,28 @@ var editor = (function() {
 		}
 	}
 
-	function onBoldClick() {
+	function onBoldClick(e) {
+		e.preventDefault();
+		e.stopPropagation();
 		document.execCommand( 'bold', false );
+		checkTextHighlighting(e);
+		notifyInlineEditUpdate();
 	}
 
-	function onItalicClick() {
+	function onItalicClick(e) {
+		e.preventDefault()
+		e.stopPropagation()
 		document.execCommand( 'italic', false );
+		checkTextHighlighting(e);
+		notifyInlineEditUpdate();
 	}
 
-	function onQuoteClick() {
+	function onUrlClick(e) {
+		e.preventDefault();
+		e.stopPropagation();
 
-		var nodeNames = findNodes( window.getSelection().focusNode );
-
-		if ( hasNode( nodeNames, 'BLOCKQUOTE' ) ) {
-			document.execCommand( 'formatBlock', false, 'p' );
-		} else {
-			document.execCommand( 'formatBlock', false, 'blockquote' );
-		}
-	}
-
-	function onUrlClick() {
-
-		if ( optionsBox.className == 'options' ) {
-
-			optionsBox.className = 'options url-mode';
+		if ( !$(editorField).hasClass('url-mode') ) {
+			$(editorField).addClass('url-mode');
 
 			// Set timeout here to debounce the focus action
 			setTimeout( function() {
@@ -249,28 +251,31 @@ var editor = (function() {
 			}, 10)
 
 		} else {
-
-			optionsBox.className = 'options';
+			console.log('remove class url mode');
+			$(editorField).removeClass('url-mode');
 		}
+		checkTextHighlighting(e);
+		notifyInlineEditUpdate();
 	}
 
 	function onUrlInputKeyDown( event ) {
 
 		if ( event.keyCode === 13 ) {
 			event.preventDefault();
-			applyURL( urlInput.value );
 			urlInput.blur();
 		}
 	}
 
 	function onUrlInputBlur( event ) {
 
-		optionsBox.className = 'options';
+		console.log('onblur');
+		$(editorField).removeClass('url-mode');
 		applyURL( urlInput.value );
 		urlInput.value = '';
 
 		currentNodeList = findNodes( window.getSelection().focusNode );
-		updateBubbleStates();
+		checkTextHighlighting();
+		notifyInlineEditUpdate();
 	}
 
 	function applyURL( url ) {
@@ -281,7 +286,13 @@ var editor = (function() {
 		document.execCommand( 'unlink', false );
 
 		if (url !== "") {
+
+			if ( !url.match("^(http|https)://") ) {
+				url = "http://" + url;	
+			} 
+
 			document.execCommand( 'createLink', false, url );
+			lastSelection = window.getSelection().getRangeAt(0);
 		}
 	}
 
@@ -304,7 +315,9 @@ var editor = (function() {
 	return {
 		init: init,
 		saveState: saveState,
-		getWordCount: getWordCount
+		getWordCount: getWordCount,
+		startEditing: startEditing,
+		stopEditing: stopEditing
 	}
 
 })();
